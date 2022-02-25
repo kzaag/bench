@@ -1,0 +1,11 @@
+
+tool to benchmark different architectures of cpus. 
+IN NO WAY this should be considered correct implementation of SMP merge sort.
+
+Usage:
+make build
+./a.out
+when prompted for number of cpus provide no more than 10,
+	coma separated number of cpus, like so:
+1,3,6,9,12,15,18
+
