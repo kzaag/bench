@@ -1,5 +1,5 @@
 
-tool to benchmark different architectures of cpus. 
+Silly tool used to benchmark cpu
 IN NO WAY this should be considered correct implementation of SMP merge sort.
 
 Usage:
