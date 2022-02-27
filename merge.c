@@ -44,16 +44,18 @@ static void __merge_sort(sort_t * a, size_t r, sort_t * s)
 	if(r <= 0)
 		return;
 
-	q = r/2;	
+	q = r/2;
+	
 	__merge_sort(a, q, s);
 	__merge_sort(a+q+1, r-q-1, s);
+	
 	merge(a, q, r, s);
 }
 
 
 struct merge_sort_args {
 	sort_t * a, * s; 
-	size_t r;
+	size_t q, r;
 };
 
 static void * __run_merge_sort(void * __args)
@@ -71,8 +73,29 @@ static void start_merge_sort(pthread_t * t, sort_t * a, size_t r, sort_t * s)
 	args->r = r;
 	args->s = s;
 	if(pthread_create(t, NULL, __run_merge_sort, args) != 0) {
-		perror("pthread_create");
-		exit(1);
+		perror("pthread_create(merge_sort)");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void * __run_merge(void * __args)
+{
+	struct merge_sort_args * args = __args;
+	merge(args->a, args->q, args->r, args->s);
+	free(args);
+	pthread_exit(NULL);
+}
+
+static void start_merge(pthread_t * t, sort_t * a, size_t q, size_t r, sort_t * s)
+{
+	struct merge_sort_args * args = malloc(sizeof(struct merge_sort_args));
+	args->a = a;
+	args->r = r;
+	args->q = q;
+	args->s = s;
+	if(pthread_create(t, NULL, __run_merge, args) != 0) {
+		perror("pthread_create(merge)");
+		exit(EXIT_FAILURE);
 	}
 }
 
@@ -81,16 +104,52 @@ static inline void * getbuf(sort_t * a, size_t size, size_t order)
 	return malloc(sizeof(sort_t) * (size + 2 + (order * 2)));
 }
 
-static void __merge_sort_n(sort_t * a, size_t size, size_t n, sort_t * s)
+static void merge_splits(sort_t * a, size_t * splits, int * n, sort_t * s)
+{
+	size_t i, p, q, r, coff = 0, ptsz = *n/2;
+	pthread_t ts[ptsz];
+	size_t splits_cpy[*n + 1], j = 1;
+
+	if(*n == 2) {
+		merge(a, splits[1], splits[2], s);
+		*n = 0;
+		return;
+	}
+
+	splits_cpy[0] = 0;
+	
+	for(i = 0; i < *n - 1; i+=2) {
+		p = splits[i];
+		q = splits[i + 1];
+		r = splits[i + 2];
+		if(i > 0)
+			p++;
+		start_merge(&ts[j-1], a+p, q-p, r-p, s + p + (coff+=2));
+		splits_cpy[j++] = r;
+	}
+
+	for(i = 0; i < ptsz; i++) {
+		pthread_join(ts[i], NULL);
+	}
+
+	*n = j - 1;
+	memcpy(splits, splits_cpy, j * sizeof(size_t));
+}
+
+static void __merge_sort_n(sort_t * a, size_t size, int n, sort_t * s)
 {
 	pthread_t t[n];
-	size_t i, coff = 0, p = 0, fs = (size - 1) / n, q = fs, splits[n];
+	size_t coff = 0, p = 0, fs = (size - 1) / n, 
+	       q = fs, splits[n+1];
+	int i, n2;
+
+	splits[0] = 0;
 
 	for(i = 0; i < n; i++) {
 		if(i == (n-1)) {
 			q = size - 1;
 		}
-		splits[i] = q;
+		splits[i+1] = q;
 		start_merge_sort(&t[i], a+p, q-p, s + p + coff);
 		p = q + 1;
 		q = p + fs;
@@ -101,9 +160,12 @@ static void __merge_sort_n(sort_t * a, size_t size, size_t n, sort_t * s)
 		pthread_join(t[i], NULL);
 	}
 
-	for(i = 0; i < n - 1; i++) {
-		merge(a, splits[i],  splits[i+1], s);	
+	
+	n2 = n;
+	while(n2 > 0) {
+		merge_splits(a, splits, &n2, s);
 	}
+	
 
 	return;
 }
@@ -178,12 +240,12 @@ static void measure_sort_n(sort_t * array, size_t size, size_t n)
 	validate(array, size);
 }
 
-#define ARR_SIZE (1e7)
+#define ARR_SIZE (1e8)
 
 int main(int argc, char ** argv)
 {
 	char c;
-	int cpus[20], i, num_cpus = 0;
+	int cpu, cpus[20], i, num_cpus = 0;
 
 	while((c = getopt(argc, argv, "c:")) != -1) {
 		switch(c) {
@@ -192,12 +254,17 @@ int main(int argc, char ** argv)
 				fprintf(stderr, "Too many cpus\n");
 				return EXIT_FAILURE;
 			}
-			cpus[num_cpus++] = atoi(optarg);
-			if(cpus[num_cpus-1] <= 0) {
-				fprintf(stderr, "%d is not valid number of cpus\n", 
+			cpu = atoi(optarg);
+			if(cpu > 1 && (cpu & (cpu - 1)) != 0) {
+				fprintf(stderr, "cpu number must be power of 2\n");
+				return EXIT_FAILURE;
+			}
+			if(cpu <= 0) {
+				fprintf(stderr, "%d is not valid cpu_number\n", 
 						cpus[num_cpus]-1);
 				return EXIT_FAILURE;
 			}
+			cpus[num_cpus++] = cpu;
 			break;
 		default:
 			fprintf(stderr, "Usage: a.out -c 1 -c 2 -c 5 ...\n"
