@@ -4,21 +4,22 @@
 #include <time.h>
 #include <string.h>
 #include <pthread.h>
+#include <getopt.h>
 
 typedef int sort_t;
 
-static void merge(sort_t * A, size_t p, size_t q, size_t r, sort_t * s)
+static void merge(sort_t * A, size_t q, size_t r, sort_t * s)
 {
 	register size_t i, j;
 	size_t k, n1, n2;
 
-	n1 = q - p + 1;
+	n1 = q + 1;
 	n2 = r - q;
 
 	sort_t * L = s;
 	sort_t * R = s + n1 + 1; /* +1 for INT_MAX terminator */
 
-	memcpy(L, A+p, sizeof(int) * n1);
+	memcpy(L, A, sizeof(int) * n1);
 	memcpy(R, A+q+1, sizeof(int) * n2);
 
 	L[n1] = INT_MAX;
@@ -27,7 +28,7 @@ static void merge(sort_t * A, size_t p, size_t q, size_t r, sort_t * s)
 	i = 0;
 	j = 0;
 
-	for(k = p; k <= r; k++) {
+	for(k = 0; k <= r; k++) {
 		if(L[i] <= R[j]) {
 			A[k] = L[i++];
 		} else {
@@ -36,38 +37,37 @@ static void merge(sort_t * A, size_t p, size_t q, size_t r, sort_t * s)
 	}
 }
 
-static void __merge_sort(sort_t * a, size_t p, size_t r, sort_t * s)
+static void __merge_sort(sort_t * a, size_t r, sort_t * s)
 {
 	int q;
 
-	if(p >= r)
+	if(r <= 0)
 		return;
 
-	q = (p+r)/2;	
-	__merge_sort(a, p, q, s);
-	__merge_sort(a, q+1, r, s);
-	merge(a, p, q, r, s);
+	q = r/2;	
+	__merge_sort(a, q, s);
+	__merge_sort(a+q+1, r-q-1, s);
+	merge(a, q, r, s);
 }
 
 
 struct merge_sort_args {
 	sort_t * a, * s; 
-	size_t p, r;	
+	size_t r;
 };
 
 static void * __run_merge_sort(void * __args)
 {
 	struct merge_sort_args * args = __args;	
-	__merge_sort(args->a, args->p, args->r, args->s);
+	__merge_sort(args->a, args->r, args->s);
 	free(args);
 	pthread_exit(NULL);
 }
 
-static void start_merge_sort(pthread_t * t, sort_t * a, size_t p, size_t r, sort_t * s)
+static void start_merge_sort(pthread_t * t, sort_t * a, size_t r, sort_t * s)
 {
 	struct merge_sort_args * args = malloc(sizeof(struct merge_sort_args));
 	args->a = a;
-	args->p = p;
 	args->r = r;
 	args->s = s;
 	if(pthread_create(t, NULL, __run_merge_sort, args) != 0) {
@@ -75,19 +75,6 @@ static void start_merge_sort(pthread_t * t, sort_t * a, size_t p, size_t r, sort
 		exit(1);
 	}
 }
-
-/*
-static void __merge_sort_2(int * a, int p, int r, int * s)
-{
-	pthread_t t1, t2;
-	int q = (p+r)/2;
-	start_merge_sort(&t1, a, p, q, s);
-	start_merge_sort(&t2, a, q+1, r, s + q + 1 + 2);
-	pthread_join(t1, NULL);
-	pthread_join(t2, NULL);
-	merge(a, p, q, r, s);
-}
-*/
 
 static inline void * getbuf(sort_t * a, size_t size, size_t order)
 {
@@ -104,7 +91,7 @@ static void __merge_sort_n(sort_t * a, size_t size, size_t n, sort_t * s)
 			q = size - 1;
 		}
 		splits[i] = q;
-		start_merge_sort(&t[i], a, p, q, s + p + coff);
+		start_merge_sort(&t[i], a+p, q-p, s + p + coff);
 		p = q + 1;
 		q = p + fs;
 		coff += 2;
@@ -115,20 +102,11 @@ static void __merge_sort_n(sort_t * a, size_t size, size_t n, sort_t * s)
 	}
 
 	for(i = 0; i < n - 1; i++) {
-		merge(a, 0, splits[i],  splits[i+1], s);	
+		merge(a, splits[i],  splits[i+1], s);	
 	}
 
 	return;
 }
-
-/*
-static void merge_sort_2(int * a, int size)
-{
-	int * s = getbuf(a, size, 1);
-	__merge_sort_2(a, 0, size-1, s);
-	free(s);
-}
-*/
 
 static void merge_sort_n(sort_t * a, size_t size, size_t order)
 {
@@ -140,11 +118,9 @@ static void merge_sort_n(sort_t * a, size_t size, size_t order)
 static void merge_sort(sort_t * a, size_t size)
 {
 	int * s = getbuf(a, size, 0);
-	__merge_sort(a, 0, size-1, s);
+	__merge_sort(a, size-1, s);
 	free(s);
 }
-
-#define ARR_SIZE (1e7)
 
 static void fill_random(sort_t * array, size_t size)
 {
@@ -183,78 +159,65 @@ static void measure_sort_n(sort_t * array, size_t size, size_t n)
 {
 	struct timespec start, end;
 	float elapsed;
-	fill_random(array, ARR_SIZE);
+	fill_random(array, size);
 	
-	printf("sorting using %d cpus...\n", n);
-
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	
 	if(n == 1)
-		merge_sort(array, ARR_SIZE);
+		merge_sort(array, size);
 	else
-		merge_sort_n(array, ARR_SIZE, n);
+		merge_sort_n(array, size, n);
 
 	clock_gettime(CLOCK_MONOTONIC, &end);
 
 	elapsed = end.tv_sec - start.tv_sec;
 	elapsed += (end.tv_nsec - start.tv_nsec) / 1e9;
 
-	printf("sort took %.3fs.\n", elapsed);
+	printf("cpus=%d time=%.3fs.\n", n, elapsed);
 	
-	validate(array, ARR_SIZE);
+	validate(array, size);
 }
 
-int main(void) 	
+#define ARR_SIZE (1e7)
+
+int main(int argc, char ** argv)
 {
+	char c;
+	int cpus[20], i, num_cpus = 0;
 
-	srand(time(NULL));
-	char * lb = NULL;
-	size_t lbl = 4;
-
-	printf("gimme number of cpus: ");
-	fflush(stdout);
-	getline(&lb, &lbl, stdin);
-
-	int pi = 0, i;
-	char cb[10];
-	int cpus[10];
-	int numcpus = 0;
-	for(i = 0; i < lbl; i++) {
-		if(lb[i] == ',' || lb[i] == '\n') {
-			if(i - pi > sizeof(cb) -1) {
-				goto err;
+	while((c = getopt(argc, argv, "c:")) != -1) {
+		switch(c) {
+		case 'c':
+			if(num_cpus >= sizeof(cpus)/sizeof(*cpus)) {
+				fprintf(stderr, "Too many cpus\n");
+				return EXIT_FAILURE;
 			}
-			memcpy(cb, lb+pi, i-pi);
-			cb[i-pi] = 0;
-			pi = i + 1;
-			if(numcpus >= (sizeof(cpus)/sizeof(*cpus)))
-				goto err;
-			cpus[numcpus++] = atoi(cb);
+			cpus[num_cpus++] = atoi(optarg);
+			if(cpus[num_cpus-1] <= 0) {
+				fprintf(stderr, "%d is not valid number of cpus\n", 
+						cpus[num_cpus]-1);
+				return EXIT_FAILURE;
+			}
+			break;
+		default:
+			fprintf(stderr, "Usage: a.out -c 1 -c 2 -c 5 ...\n"
+						"-c is amount of cpus on which to run benchmark\n");
+			return EXIT_FAILURE;
 		}
 	}
 
-	if(!numcpus)
-		goto err;
-
-	for(i = 0; i < numcpus; i++) {
-		if(cpus[i] <= 0) {
-			goto err;
-		}
+	if(num_cpus == 0) {
+		num_cpus = 1;
+		cpus[0] = 1;
 	}
-
-	free(lb);
 
 	printf("initializing array with %.1e elements\n", ARR_SIZE);
 	int * array = malloc(ARR_SIZE * sizeof(int));
 
-	for(i = 0; i < numcpus; i++) {
+	for(i = 0; i < num_cpus; i++) {
 		measure_sort_n(array, ARR_SIZE, cpus[i]);
 	}
 
 	return 0;
-
-err:
-	printf("nope, not falling for it\n");
-	return -1;
 }
 
